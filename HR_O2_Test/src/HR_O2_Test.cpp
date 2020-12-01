@@ -35,16 +35,16 @@
   The MAX30105 Breakout can handle 5V or 3.3V I2C logic. We recommend powering the board with 5V
   but it will also run at 3.3V.
 */
-void setup();
-void loop();
-#line 32 "c:/Users/Janel/Documents/IoT/JS-Capstone/HR_O2_Test/src/HR_O2_Test.ino"
-SYSTEM_MODE(SEMI_AUTOMATIC);
+// SYSTEM_MODE(SEMI_AUTOMATIC);
 
 #include <Wire.h>
 #include "MAX30105.h"
 
 #include "heartRate.h"
 
+void setup();
+void loop();
+#line 39 "c:/Users/Janel/Documents/IoT/JS-Capstone/HR_O2_Test/src/HR_O2_Test.ino"
 MAX30105 particleSensor;
 
 const byte RATE_SIZE = 4; //Increase this for more averaging. 4 is good.
