@@ -1,7 +1,7 @@
 /*
  * Project MAX30102
  * Description: HR/O2 Monitor
- * Author: Janel Sanchez / Cecilia Castillo
+ * Author: Janel Sanchez
  * Date: 02-Dec-2020
  */
 
@@ -39,14 +39,14 @@ Adafruit_SSD1306 display(OLED_RESET);
 
 // Interrupt pin
 const byte oxiInt = D8;                                   // pin connected to MAX30102 INT
-byte readLED = D4;                                        //Blinks with each data read
 MAX30105 particleSensor;
 
 uint32_t aun_ir_buffer[BUFFER_SIZE];                      //infrared LED sensor data
-uint32_t aun_red_buffer[BUFFER_SIZE];                     //red LED sensor data
-float old_n_spo2;                                         // Previous SPO2 value
+uint32_t aun_red_buffer[BUFFER_SIZE];  
+uint32_t hr;                   //red LED sensor data
+float old_n_spo2, spo2;                                         // Previous SPO2 value
 uint8_t uch_dummy,k;
-bool isFingerPlaced = false;
+bool isWristPlaced = false;
 
 unsigned long lastDisplayTime;
 unsigned long lastPublishTime;
@@ -55,9 +55,15 @@ unsigned long last;
 void setup() {
   // Wire.setClock(400000);                                  // Set I2C speed to 400kHz
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);              // Start the OLED display
-  
+  display.clearDisplay();
+  display.display();
+  display.setTextSize(1);
+  display.setCursor(0,0);
+  display.setTextColor(WHITE);
+  display.println("Place on wrist and wait...");
+  display.display();
+
   pinMode(oxiInt, INPUT);                                 //pin D10 connects to the interrupt output pin of the MAX30102
-  pinMode(readLED, OUTPUT);
   Wire.begin();
 
   particleSensor.begin(Wire, I2C_SPEED_FAST);         // Use default I2C port, 400kHz speed
@@ -70,66 +76,30 @@ void setup() {
   maxim_max30102_init();                                  //initialize the MAX30102
   old_n_spo2=0.0;
 
-  uint8_t revID;
-  uint8_t partID;
-
-  // maxim_max30102_read_reg(0xFE, &revID);
-  // maxim_max30102_read_reg(0xFF, &partID);
-
-  // Serial.print("Rev ");
-  // Serial.print(revID, HEX);
-  // Serial.print(" Part ");
-  // Serial.println(partID, HEX);
-  // Serial.print("-------------------------------------");
-
-  // delay(5000);
   sync_my_time();
 }
 
 //Continuously taking samples from MAX30102.  Heart rate and SpO2 are calculated every ST seconds
 void loop() {
-  MQTT_connect();
-  MQTT_ping();
+  // MQTT_ping();
   processHRandSPO2();
-}
-
-void setDisplay(int32_t hr, float spo2, String msg){
-  // display.clearDisplay();
-  // display.setTextSize(2);
-  // display.setCursor(0, 0);
-  Serial.print("BPM:");
-  if(hr == -999){
-    Serial.print("-");
-  } else {
-    Serial.print(hr);
-  }
-  // display.setTextSize(2);
-  // display.setCursor(0, 20);
-  Serial.print("SpO2:");
-  if(hr == -999){
-    Serial.print("-");
-  } else {
-    Serial.print(spo2);
-  }
-  // display.setCursor(0, 45);
-  // display.setTextSize(1);
-  Serial.print(msg);
-  // display.display();
+  displayPrint(hr,spo2);
+  MQTT_connect();
+  publish(hr,spo2);
 }
 
 void processHRandSPO2(){
   long irValue = particleSensor.getIR();                  // Reading the IR value it will permit us to know if there's a finger on the sensor or not
+  Serial.println(irValue);
   if (irValue > 50000){
-    if(isFingerPlaced == false){
-      isFingerPlaced = true;
-      setDisplay(-999, -999, "measuring vitals...");
+    if(isWristPlaced == false) {
+      isWristPlaced = true;
     }
     float n_spo2,ratio,correl;                            //SPO2 value
     int8_t ch_spo2_valid;                                 //indicator to show if the SPO2 calculation is valid
     int32_t n_heart_rate;                                 //heart rate value
     int8_t  ch_hr_valid;                                  //indicator to show if the heart rate calculation is valid
     int32_t i;
-    char hr_str[10];
        
     //buffer length of BUFFER_SIZE stores ST seconds of samples running at FS sps
     //read BUFFER_SIZE samples, and determine the signal range
@@ -138,7 +108,6 @@ void processHRandSPO2(){
       while(digitalRead(oxiInt)==1){                      //wait until the interrupt pin asserts
          yield();
       }
-      digitalWrite(readLED, !digitalRead(readLED));
       
       //IMPORTANT: 
       //IR and LED are swapped here for MH-ET MAX30102. Check your vendor for MAX30102
@@ -150,27 +119,12 @@ void processHRandSPO2(){
     //calculate heart rate and SpO2 after BUFFER_SIZE samples (ST seconds of samples) using Robert's method
     rf_heart_rate_and_oxygen_saturation(aun_ir_buffer, BUFFER_SIZE, aun_red_buffer, &n_spo2, &ch_spo2_valid, &n_heart_rate, &ch_hr_valid, &ratio, &correl); 
 
-    displayPrint(n_heart_rate,n_spo2);
-    publish(n_heart_rate,n_spo2);
-
-    setDisplay(n_heart_rate, n_spo2, "measuring vitals...");
-    Serial.println("--RF--");
-    Serial.print("\tSpO2: ");
-    Serial.print(n_spo2);
-    Serial.print("\tHR: ");
-    Serial.print(n_heart_rate, DEC);
-    Serial.print("\tRatio: ");
-    Serial.print(ratio, DEC);
-    Serial.print("\tCorrel: ");
-    Serial.print(correl, DEC);
-    // Serial.print("\t");
-    // Serial.println(hr_str);
-    Serial.println("------");
-  }else{
-    digitalWrite(readLED, HIGH);
-    isFingerPlaced = false;
+    hr = n_heart_rate;
+    spo2 = n_spo2;
+  }
+  else {
+    isWristPlaced = false;
     Serial.println("No finger");
-    setDisplay(-999, -999, "Place your finger on sensor and wait..");
   }
 }
 
@@ -196,43 +150,54 @@ void displayPrint (int32_t dhr, float dspo2) {
   TimeOnly = DateTime.substring(11,19);
   TimeOnly.toCharArray(currentTime,9);
 
-  if ((millis()-lastDisplayTime)>10000) {
-    display.clearDisplay();
-    display.display();
+  if (isWristPlaced == true) {
+    if ((millis()-lastDisplayTime)>10000) {
+      display.clearDisplay();
+      display.display();
 
-    display.setTextSize(1);
-    display.setCursor(0,0);
-    display.setTextColor(BLACK, WHITE);
-    Serial.printf("Display Date: %s %s \n", currentDate,currentYear);
-    display.printf("Date: %s %s", currentDate,currentYear);
-    Serial.printf("Display Time: %s \n", currentTime);
-    display.printf("Time: %s\n", currentTime);
+      display.setTextSize(1);
+      display.setCursor(0,0);
+      display.setTextColor(BLACK, WHITE);
+      Serial.printf("Display Date: %s %s \n", currentDate,currentYear);
+      display.printf("Date: %s %s", currentDate,currentYear);
+      Serial.printf("Display Time: %s \n", currentTime);
+      display.printf("Time: %s\n", currentTime);
 
-    display.setTextColor(WHITE);
-    Serial.printf("Display Heart Rate: %i \n", dhr);
-    display.println();
-    display.printf("Heart Rate: %i \n", dhr);
+      if (dhr>1 && dspo2>1) {
+        display.setTextColor(WHITE);
+        Serial.printf("Display Heart Rate: %i \n", dhr);
+        display.println();
+        display.printf("Heart Rate: %i \n", dhr);
 
-    display.setTextColor(WHITE);
-    Serial.printf("Display Oxygen: %0.1f \n", dspo2);
-    display.printf("Oxygen: %0.1f \n", dspo2);
-  
-    display.display();
-    lastDisplayTime = millis();
+        display.setTextColor(WHITE);
+        Serial.printf("Display Oxygen: %0.1f \n", dspo2);
+        display.printf("Oxygen: %0.1f \n", dspo2);
+      }
+      else {
+        display.setTextColor(WHITE);
+        display.println();
+        display.println("Measuring Vitals...");    
+      }
+    
+      display.display();
+      lastDisplayTime = millis();
+    }
   }
 }
 
 void publish (int32_t phr, float pspo2) {
-  if ((millis()-lastPublishTime)>10000) {
-    if(mqtt.Update()) {
-      heartRate.publish(phr);
-      Serial.printf("Publishing HR: %i \n", phr);
-      oxygen.publish(pspo2);
-      Serial.printf("Publishing O2: %0.1f \n", pspo2);
+  if (phr>1 && pspo2>1) {
+    if ((millis()-lastPublishTime)>10000) {
+      if(mqtt.Update()) {
+        heartRate.publish(phr);
+        Serial.printf("Publishing HR: %i \n", phr);
+        oxygen.publish(pspo2);
+        Serial.printf("Publishing O2: %0.1f \n", pspo2);
+      }
+      lastPublishTime = millis();
     }
-    lastPublishTime = millis();
   }
-}
+} 
 
 void MQTT_connect() {
   int8_t ret;
