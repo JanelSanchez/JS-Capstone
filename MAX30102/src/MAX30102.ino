@@ -5,13 +5,15 @@
  * Date: 02-Dec-2020
  */
 
-// #include <Adafruit_MQTT.h>
+// SYSTEM_MODE(SEMI_AUTOMATIC);
 
-// #include "Adafruit_MQTT/Adafruit_MQTT.h" 
-// #include "Adafruit_MQTT/Adafruit_MQTT_SPARK.h" 
-// #include "Adafruit_MQTT/Adafruit_MQTT.h" 
+#include <Adafruit_MQTT.h>
 
-// #include "credentials.h"
+#include "Adafruit_MQTT/Adafruit_MQTT.h" 
+#include "Adafruit_MQTT/Adafruit_MQTT_SPARK.h" 
+#include "Adafruit_MQTT/Adafruit_MQTT.h" 
+
+#include "credentials.h"
 
 #include <Wire.h>
 #include <SPI.h>
@@ -22,14 +24,12 @@
 #include <Adafruit_GFX.h>                                 // OLED Library
 #include <Adafruit_SSD1306.h>                             // OLED Library
 
-// SYSTEM_MODE(SEMI_AUTOMATIC);
-
 TCPClient TheClient; 
 
-// Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
+Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
 
-// Adafruit_MQTT_Publish heartRate = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/HR");
-// Adafruit_MQTT_Publish oxygen = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/O2");
+Adafruit_MQTT_Publish heartRate = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/HR");
+Adafruit_MQTT_Publish oxygen = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/O2");
 
 //#define DEBUG                                           // Uncomment for debug output to the Serial stream
 
@@ -49,6 +49,8 @@ uint8_t uch_dummy,k;
 bool isFingerPlaced = false;
 
 unsigned long lastDisplayTime;
+unsigned long lastPublishTime;
+unsigned long last;
 
 void setup() {
   // Wire.setClock(400000);                                  // Set I2C speed to 400kHz
@@ -86,7 +88,9 @@ void setup() {
 
 //Continuously taking samples from MAX30102.  Heart rate and SpO2 are calculated every ST seconds
 void loop() {
-   processHRandSPO2();
+  MQTT_connect();
+  MQTT_ping();
+  processHRandSPO2();
 }
 
 void setDisplay(int32_t hr, float spo2, String msg){
@@ -147,6 +151,7 @@ void processHRandSPO2(){
     rf_heart_rate_and_oxygen_saturation(aun_ir_buffer, BUFFER_SIZE, aun_red_buffer, &n_spo2, &ch_spo2_valid, &n_heart_rate, &ch_hr_valid, &ratio, &correl); 
 
     displayPrint(n_heart_rate,n_spo2);
+    publish(n_heart_rate,n_spo2);
 
     setDisplay(n_heart_rate, n_spo2, "measuring vitals...");
     Serial.println("--RF--");
@@ -168,7 +173,6 @@ void processHRandSPO2(){
     setDisplay(-999, -999, "Place your finger on sensor and wait..");
   }
 }
-
 
 
 void sync_my_time () {
@@ -218,9 +222,44 @@ void displayPrint (int32_t dhr, float dspo2) {
   }
 }
 
-// void publish() {
-//   if(mqtt.Update()) {
-//     button.publish(buttonState);
-//     Serial.printf("Alert Button Pressed \n"); 
-//   } 
-// }
+void publish (int32_t phr, float pspo2) {
+  if ((millis()-lastPublishTime)>10000) {
+    if(mqtt.Update()) {
+      heartRate.publish(phr);
+      Serial.printf("Publishing HR: %i \n", phr);
+      oxygen.publish(pspo2);
+      Serial.printf("Publishing O2: %0.1f \n", pspo2);
+    }
+    lastPublishTime = millis();
+  }
+}
+
+void MQTT_connect() {
+  int8_t ret;
+ 
+  // Stop if already connected.
+  if (mqtt.connected()) {
+    return;
+  }
+ 
+  Serial.print("Connecting to MQTT... ");
+ 
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+       Serial.println(mqtt.connectErrorString(ret));
+       Serial.println("Retrying MQTT connection in 5 seconds...");
+       mqtt.disconnect();
+       delay(5000);  // wait 5 seconds
+  }
+  Serial.println("MQTT Connected!");
+}
+
+void MQTT_ping() {
+  if ((millis()-last)>120000) {
+    Serial.printf("Pinging MQTT \n");
+    if(! mqtt.ping()) {
+      Serial.printf("Disconnecting \n");
+      mqtt.disconnect();
+    }
+    last = millis();
+  }
+}

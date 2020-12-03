@@ -27,7 +27,7 @@ void setup() {
   Serial.begin(9600);
   delay(100); //wait for Serial Monitor to startup
 
-  pinMode (buttonPin, INPUT);
+  pinMode (buttonPin, INPUT_PULLDOWN);
 }
 
 void loop() {
